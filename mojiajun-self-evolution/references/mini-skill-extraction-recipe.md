@@ -1,44 +1,75 @@
-# Mini-Skill 拆解配方
+# Mini-Skill Extraction + LLMJudge Optimization Recipe
 
-## 核心发现
+## When to Use
 
-整坨Skill（200行+）MIPROv2优化无效，拆成1000-2000字符的单一任务单元后显著提升。
+When a large Skill (5000+ chars, multi-section) fails to show improvement under MIPROv2 optimization (score flatlines at 30%).
 
-## 拆解标准
+## Root Cause
 
-| 判定 | 适合优化 | 不适合优化 |
-|:---|:---|:---|
-| **大小** | 1000-2000字符 | >4000字符 |
-| **任务数** | 单一任务（输入→输出明确） | 多任务编排 |
-| **可评测性** | 有对错标准（标题质量/结构完整性） | 纯创意无标准 |
-| **结构** | 规则+模板+示例 三段式 | YAML头+表格+子模块 |
+The default `skill_fitness_metric` uses **keyword overlap** between expected_behavior and agent_output:
+```python
+overlap = len(expected_words & output_words) / len(expected_words)
+score = 0.3 + (0.7 * overlap)
+```
 
-## 优化效果规律
+For complex orchestration skills, keyword overlap is meaningless — it can't differentiate between "followed the correct workflow" and "mentioned the right words."
 
-- **创造性任务**（标题创作、漫画脚本）→ 提升 18-30%，优化空间最大
-- **半结构化任务**（笔记正文）→ 提升 5-10%，有一定结构也有发挥空间
-- **强规则任务**（封面Prompt、评论区）→ 提升 0-5%，规则越明确优化越少
+## Solution: LLMJudge Injection
 
-## 拆解流程
+The `evolution/core/fitness.py` file already has a full `LLMJudge` class that scores on 3 dimensions (correctness 0.5 + procedure_following 0.3 + conciseness 0.2). But it's only used in the GEPA path. To use it with MIPROv2:
 
-1. 从主Skill中识别可独立的子任务
-2. 提取相关规则到 mini-SKILL.md（仅保留该任务需要的）
-3. 添加 `任务指令` 段落（明确输入输出格式）
-4. 保持 1000-2000 字符，超过就继续拆
-5. 放入 `~/.hermes/skills/social-media/{name}/SKILL.md`
-6. 用 `--skill {name} --hermes-repo ~/.hermes` 跑优化
-7. 优化后的 mini-Skill 同时放到主Skill的 `references/optimized/` 下
+### Step 1: Create SkillFitnessLLM wrapper class
 
-## 已验证案例（2026-05-04）
+```python
+class SkillFitnessLLM:
+    """LLM-as-judge metric for MIPROv2 — replaces keyword overlap."""
+    def __init__(self, skill_text, config):
+        self.skill_text = skill_text
+        self.judge = LLMJudge(config)
+    
+    def __call__(self, example, prediction, trace=None):
+        agent_output = getattr(prediction, "output", "") or ""
+        expected = getattr(example, "expected_behavior", "") or ""
+        task = getattr(example, "task_input", "") or ""
+        if not agent_output.strip():
+            return 0.0
+        score = self.judge.score(
+            task_input=task,
+            expected_behavior=expected,
+            agent_output=agent_output[:2000],
+            skill_text=self.skill_text[:3000],
+        )
+        return score.composite
+```
 
-从 `mojiajun-xiaohongshu`（5541字符）拆出5个：
+### Step 2: Inject into evolve_skill.py
 
-| mini-Skill | 字符 | 任务 | 提升 |
-|:---|:--:|:---|:--:|
-| title-crafter | 1880 | 主题→3个候选标题 | +30.3% |
-| comic-script-crafter | 975 | 主题→4格脚本 | +18.6% |
-| note-body-crafter | 1770 | 主题+标题→正文 | +8.1% |
-| cover-prompt-crafter | 2510 | 内容类型→MJ Prompt | +5.4% |
-| comment-crafter | 811 | 笔记主题→3条预埋评论 | +0% |
+In `evolve_skill.py`, before the try/except block:
+```python
+llm_fitness = SkillFitnessLLM(skill["body"], config)
+```
 
-**注意**：MIPROv2优化的是编译后程序（few-shot示例选择），不是原始文本。提升在运行时体现，不在 SKILL.md 文件本身。
+Then change both GEPA and MIPROv2 metrics:
+```python
+optimizer = dspy.GEPA(metric=llm_fitness, ...)  # was skill_fitness_metric
+optimizer = dspy.MIPROv2(metric=llm_fitness, ...)  # was skill_fitness_metric
+```
+
+## Results
+
+| Skill | Chars | Keyword Score | LLMJudge Score | Improvement |
+|:---|:---:|:---:|:---:|:---:|
+| mojiajun-xiaohongshu (full) | 5541 | 30% flat | 70-95% range | +0% (too large) |
+| title-crafter (mini) | 1880 | 30% flat | 56-73% | **+30.3%** |
+| comic-script-crafter (mini) | 2214 | — | 72-86% | **+18.6%** |
+| note-body-crafter (mini) | 4201 | 78-90% | 83-90% | **+8.1%** |
+| cover-prompt-crafter (mini) | 3887 | — | 87-92% | **+5.4%** |
+| comment-crafter (mini) | 1980 | — | 98% | +0% (already optimal) |
+
+## Key Insight
+
+The LLMJudge works but MIPROv2 can only mutate small skills (1000-2000 chars). Large skills (>4000 chars) need decomposition first. The optimization improvement comes from **better few-shot example selection**, not text changes to the skill file.
+
+## Python 3.9 Limitation
+
+GEPA requires dspy 3.0+ which requires Python 3.10+. On Python 3.9, MIPROv2 is the fallback. To access GEPA (ICLR 2026 Oral, +10% over MIPROv2), upgrade Python.
