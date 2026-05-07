@@ -58,6 +58,7 @@ def insert_task(
     priority: int = 1,
     parent_task_id: Optional[str] = None,
     timeout_seconds: int = 300,
+    acceptance_criteria: Optional[dict] = None,
 ) -> str:
     """
     写入一个任务到 CORE-01 task_queue。
@@ -69,6 +70,8 @@ def insert_task(
         priority: 优先级，默认1
         parent_task_id: 父任务ID（子任务链）
         timeout_seconds: 超时秒数
+        acceptance_criteria: Ralph Loop验收标准，格式:
+            {"rules": [...], "require_marker": true, "completion_marker": "DONE", "max_attempts": 5}
 
     Returns:
         生成的 task_id
@@ -79,13 +82,23 @@ def insert_task(
     )
     payload_json = json.dumps(payload, ensure_ascii=False)
 
+    if acceptance_criteria:
+        ac_json = json.dumps(acceptance_criteria, ensure_ascii=False)
+        # 对单引号做MySQL转义
+        ac_sql = ac_json.replace("\\", "\\\\").replace("'", "\\'")
+        ac_field = f", acceptance_criteria"
+        ac_value = f", '{ac_sql}'"
+    else:
+        ac_field = ""
+        ac_value = ""
+
     sql = (
         f"INSERT INTO task_queue "
         f"(task_id, parent_sub_task_id, target_agent, task_type, "
-        f"payload, priority, status, timeout_seconds) "
+        f"payload, priority, status, timeout_seconds{ac_field}) "
         f"VALUES ("
         f"'{task_id}', {parent_clause}, '{target_agent}', '{task_type}', "
-        f"'{payload_json}', {priority}, 'pending', {timeout_seconds}"
+        f"'{payload_json}', {priority}, 'pending', {timeout_seconds}{ac_value}"
         f")"
     )
     rc, out = _mysql_query(sql)
