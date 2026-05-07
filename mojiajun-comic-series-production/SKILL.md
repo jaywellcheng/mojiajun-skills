@@ -146,3 +146,28 @@ PIL云状气泡方案：12个变径小圆围边+半透明填充+居中文字
 
 ### SSH heredoc吃引号
 向CORE-01传Python脚本时，用 `python3 << 'PYEOF'` 且避免f-string中的引号嵌套，改用 `+` 拼接或 `.format()`。
+
+### `source .env` 污染Python文件（致命）
+`cd /home/ubuntu/mojiajun-queue && source .env && python3 xxx.py` 这种写法极其危险：
+- `source .env` 执行时会把shell回显（包括可能的错误信息如`/usr/bin/bash: line X: /tmp/hermes-*.sh: No such file or directory`）**追写到 Python 文件末尾**
+- 这些 shell 错误行在 Python 文件中形成 `SyntaxError: invalid syntax`
+- **一旦发生，该 Python 文件被永久破坏**，每次运行都报语法错误
+
+**正确做法（两种任一）**：
+1. **分两行执行**：先 `source .env` 独立一行，再 `python3 xxx.py`
+2. **不 source，直接在 Python 内读取环境变量**：
+   ```python
+   import dotenv; dotenv.load_dotenv('/home/ubuntu/mojiajun-queue/.env')
+   ```
+3. **或者**：把 `.env` 里需要的 key 提取到 `export KEY=value` 形式再用 `&&`
+
+**修复已被污染的文件**：用 Python 读取文件，过滤掉所有以 `/usr/bin/bash:` 开头的行，再写回。
+```python
+with open('file.py', 'r') as f:
+    lines = f.readlines()
+clean = [l for l in lines if not l.startswith('/usr/bin/bash:')]
+with open('file.py', 'w') as f:
+    f.writelines(clean)
+```
+
+⚠️ **cron job 尤其危险**：cron 执行的 source 出错时无人发现，直到下次运行报错才暴露。
