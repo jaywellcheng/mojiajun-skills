@@ -34,7 +34,20 @@ tags:
 | style_auditor.pre_publish_check() | CORE-01 | 单篇笔记发布前审核，返回 passed+feedback |
 | task_batcher.dispatch_with_rework() | 小川本地 | 轮询检测整个创作+审核回路 |
 
-## ⚠️ 关键陷阱：module dispatch 提前 return
+## ⚠️ 注意：Ralph Loop 已取代此功能
+
+审核回路已升级为通用Ralph Loop验收系统（`mojiajun-ralph-loop` v2.0）。
+
+| | 旧审核回路 | 新Ralph Loop |
+|---|---|---|
+| 触发范围 | 仅审核类 | 所有task_type |
+| 验收方式 | 人工pass/fail | 机器可验证的12种运算符 |
+| 重试上限 | 固定3次 | 可配置max_attempts |
+| 完成标记 | 无 | <promise>DONE</promise> |
+| 上下文 | 累积 | 全新(参数过滤) |
+| 看板 | 无 | 6列Kanban |
+
+**请使用 `mojiajun-ralph-loop` 的 `acceptance_criteria` 替代旧的审核回路。**
 
 agent_worker.py 的 execute_task 方法中，module dispatch 成功后会直接 `return result`（原L217），**跳过所有后续代码**。Hook 必须注入在 `return result` 之前（L216-L217之间），不能放在方法末尾。
 
