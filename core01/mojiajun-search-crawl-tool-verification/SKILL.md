@@ -129,6 +129,8 @@ ssh ubuntu@159.75.12.11 'python3 /tmp/verify_tool.py'
 | Tavily | `TAVILY_API_KEY 未配置` | 追加Key到.env并重启Worker |
 | Tavily | `TypeError: search() got an unexpected keyword argument 'x'` | 参数名是 `query` 不是 `keywords` |
 | Scrapling | `No module named 'curl_cffi'` | `pip3 install curl_cffi --break-system-packages` |
+| Scrapling | `'Response' object has no attribute 'content'` | 0.4.x新API：用 `r.body`（bytes）替代 `r.content`，用 `r.html_content`（HTML字符串）替代 `r.text` |
+| Scrapling | `'Selectors' object has no attribute 'text'` | 提取文本用 `el.extract_first('text')`，不要用 `el.text` 或 `el.get_all_text()` |
 | Crawl4AI | `Executable doesn't exist` | 需要装Playwright浏览器或Chrome for Testing (~200MB)。注意：**国内服务器无法直接下载**（playwright源和Google CDN均被墙），需要用户在本地用VPN下载 Linux64 版的 chrome-linux64.zip 然后 scp 上传安装 |
 | Crawl4AI | `ModuleNotFoundError` for asyncio | 用 `.py` 文件跑，不用 `-c` 内嵌 |
 
@@ -137,4 +139,28 @@ ssh ubuntu@159.75.12.11 'python3 /tmp/verify_tool.py'
 - ✅ **Tavily** → 搜索全网（热点、竞品、素材）— Key已配，Worker已重启
 - ✅ **Scrapling** → 页面解析（CSS选择器提取内容）
 - ⚠️ **Crawl4AI** → 抓渲染页面（需额外装浏览器）
-- ❌ **DuckDuckGo** → 放弃（国内网络限制）
+| ❌ **DuckDuckGo** → 放弃（国内网络限制） |
+
+### Scrapling 0.4.7 快速参考（已验证 2026-05-05）
+
+```python
+from scrapling import Fetcher
+f = Fetcher()
+r = f.get('https://example.com', timeout=15)
+
+# 获取原始响应
+r.status          # 200
+r.body            # bytes内容（替代旧的 .content）
+r.html_content    # 解析后的HTML字符串（替代旧的 .text）
+
+# CSS选择器提取
+r.css('h1')       # 返回 Selectors 对象
+r.css('h1').extract_first('text')   # 提取文本（不要用 .text 或 .get_all_text()）
+r.css('h1').first                    # 第一个匹配元素
+r.css('p').extract()                 # 提取所有匹配
+
+# XPath提取
+r.xpath('//h1').extract_first('text')
+```
+
+注意：新版弃用了 `Fetcher.configure()` 之前的旧模式，有警告但不影响运行。
