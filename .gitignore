@@ -14,3 +14,7 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# macOS metadata
+._*
+*.bak
